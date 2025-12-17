@@ -1,0 +1,90 @@
+<?php
+// Bypass file: api/user.bypass
+header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
+
+$input = json_decode(file_get_contents('php://input'), true);
+$action = $input['action'] ?? '';
+$token = $input['token'] ?? '';
+
+require_once '../config/database.php';
+
+// Verify token
+function verifyToken($pdo, $token) {
+    $stmt = $pdo->prepare("SELECT id, name, token FROM users WHERE token = ?");
+    $stmt->execute([$token]);
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+$user = verifyToken($pdo, $token);
+if (!$user) {
+    echo json_encode(['success' => false, 'message' => 'Invalid token']);
+    exit;
+}
+
+switch ($action) {
+    case 'getTimeLeft':
+        try {
+            $stmt = $pdo->prepare("SELECT time_left FROM users WHERE token = ?");
+            $stmt->execute([$token]);
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($result) {
+                echo json_encode(['success' => true, 'timeLeft' => $result['time_left']]);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'User not found']);
+            }
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => 'Database error: ' . $e->getMessage()]);
+        }
+        break;
+        
+    case 'updateTimeLeft':
+        $timeLeft = $input['timeLeft'] ?? '';
+        try {
+            $stmt = $pdo->prepare("UPDATE users SET time_left = ? WHERE token = ?");
+            $stmt->execute([$timeLeft, $token]);
+            echo json_encode(['success' => true, 'message' => 'Time updated successfully']);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => 'Database error: ' . $e->getMessage()]);
+        }
+        break;
+        
+    case 'updateConnectionStatus':
+        $connected = $input['connected'] ?? false;
+        try {
+            // Update connection status in database
+            $stmt = $pdo->prepare("UPDATE users SET connection_status = ?, last_connection_update = NOW() WHERE token = ?");
+            $stmt->execute([$connected ? 1 : 0, $token]);
+            
+            // Log the connection change
+            $stmt = $pdo->prepare("INSERT INTO system_logs (level, message, user_id) VALUES (?, ?, ?)");
+            $stmt->execute(['info', "User " . ($connected ? 'connected' : 'disconnected') . " via tray application", $user['id']]);
+            
+            echo json_encode(['success' => true, 'message' => 'Connection status updated']);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => 'Database error: ' . $e->getMessage()]);
+        }
+        break;
+        
+    case 'getConnectionStatus':
+        try {
+            $stmt = $pdo->prepare("SELECT connection_status FROM users WHERE token = ?");
+            $stmt->execute([$token]);
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($result) {
+                $connected = $result['connection_status'] == 1;
+                echo json_encode(['success' => true, 'connected' => $connected]);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'User not found']);
+            }
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => 'Database error: ' . $e->getMessage()]);
+        }
+        break;
+        
+    default:
+        echo json_encode(['success' => false, 'message' => 'Invalid action']);
+}
+?>
